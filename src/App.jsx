@@ -17,11 +17,16 @@ function App() {
         const parsed = JSON.parse(todoString)
         const now = Date.now();
         return parsed.map(item => {
-          // Backward compatibility: Convert old timeLeft to absolute targetTime if targetTime is missing
-          const remainingSecs = item.timeLeft !== undefined ? item.timeLeft : (item.duration || 0);
+          // Preserve existing targetTime if valid, otherwise check if old duration existed
+          let targetTime = item.targetTime;
+          if (!targetTime && item.timeLeft > 0) {
+            targetTime = now + (item.timeLeft * 1000);
+          } else if (!targetTime && item.duration > 0) {
+            targetTime = now + (item.duration * 1000);
+          }
           return {
             ...item,
-            targetTime: item.targetTime || (now + (remainingSecs * 1000)),
+            targetTime: targetTime || null,
             hasExpired: item.hasExpired || false
           }
         })
@@ -38,7 +43,7 @@ function App() {
     localStorage.setItem("todos", JSON.stringify(updatedTodos))
   }
 
-  // Timer Tick Effect (Uses absolute timestamps to survive background tab throttling)
+  // Timer Tick Effect (Only runs for tasks with a valid targetTime)
   useEffect(() => {
     const interval = setInterval(() => {
       setTodos(prevTodos => {
@@ -46,6 +51,7 @@ function App() {
         const now = Date.now();
         
         const updated = prevTodos.map(item => {
+          // Only process uncompleted tasks that have an active targetTime set
           if (!item.isCompleted && item.targetTime) {
             hasChanges = true;
             const timeLeft = Math.max(0, Math.ceil((item.targetTime - now) / 1000));
@@ -80,10 +86,8 @@ function App() {
                 }
               }, 100);
 
-              return { ...item, timeLeft: 0, hasExpired: true };
+              return { ...item, targetTime: null, hasExpired: true };
             }
-            
-            return { ...item, timeLeft };
           }
           return item;
         });
@@ -107,7 +111,7 @@ function App() {
     setTodo(t[0].todo)
     
     const now = Date.now();
-    const remainingSecs = t[0].targetTime ? Math.max(0, Math.ceil((t[0].targetTime - now) / 1000)) : (t[0].duration || 0);
+    const remainingSecs = t[0].targetTime ? Math.max(0, Math.ceil((t[0].targetTime - now) / 1000)) : 0;
     
     const m = Math.floor(remainingSecs / 60);
     const s = remainingSecs % 60;
@@ -167,10 +171,12 @@ function App() {
     saveToLS(newTodos)
   }
 
-  const formatTime = (seconds) => {
-    if (seconds === undefined || seconds === null || seconds <= 0) return null;
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
+  const formatTime = (targetTime) => {
+    if (!targetTime) return null;
+    const remainingSecs = Math.max(0, Math.ceil((targetTime - Date.now()) / 1000));
+    if (remainingSecs <= 0) return null;
+    const mins = Math.floor(remainingSecs / 60);
+    const secs = remainingSecs % 60;
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   }
 
@@ -258,9 +264,7 @@ function App() {
             )}
 
             {todos.map(item => {
-              const now = Date.now();
-              const remainingSecs = item.targetTime ? Math.max(0, Math.ceil((item.targetTime - now) / 1000)) : 0;
-              const formattedTime = formatTime(remainingSecs);
+              const formattedTime = formatTime(item.targetTime);
 
               return (showFinished || !item.isCompleted) && (
                 <div 
